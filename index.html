@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Matiere Noire · Notes</title>
+<style>
+:root{
+  --paper:#F7F7F5; --ink:#14161A; --ink2:#5C6169; --ink3:#8C9199;
+  --rule:#DDDEDA; --rule2:#EDEEEA; --card:#FFFFFF;
+  --live:#2F6F4F; --warn:#B4711E; --stop:#A63A2B;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --sans:"Helvetica Neue",Inter,system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5}
+button,input,select,textarea{font:inherit;color:inherit}
+
+header{position:sticky;top:0;z-index:30;background:var(--paper);border-bottom:1px solid var(--rule);
+  padding:12px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+h1{margin:0;font-size:14px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;white-space:nowrap}
+.spacer{flex:1}
+select,input,textarea{border:1px solid var(--rule);border-radius:3px;padding:6px 9px;background:var(--card)}
+select:focus,input:focus,textarea:focus{outline:none;border-color:var(--ink)}
+.btn{border:1px solid var(--rule);background:var(--card);border-radius:3px;padding:6px 12px;cursor:pointer;font-size:13px}
+.btn:hover{border-color:var(--ink3)}
+.btn.p{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.d{color:var(--stop);border-color:transparent;padding:3px 7px}
+.btn.d:hover{border-color:var(--stop)}
+.lang{display:flex;border:1px solid var(--rule);border-radius:3px;overflow:hidden}
+.lang button{background:var(--card);border:0;padding:6px 10px;cursor:pointer;font-family:var(--mono);
+  font-size:11px;letter-spacing:.06em;color:var(--ink3)}
+.lang button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+
+#bar{font-family:var(--mono);font-size:11px;padding:6px 18px;border-bottom:1px solid var(--rule);
+  display:flex;gap:9px;align-items:center;background:#FFFDF6}
+#bar.ok{background:#F2F7F3} #bar.err{background:#FCF3F1}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ink3)}
+.dot.ok{background:var(--live)} .dot.err{background:var(--stop)}
+
+main{padding:18px;max-width:1180px}
+.hint{font-size:12px;color:var(--ink2);margin:0 0 14px}
+.compose{background:var(--card);border:1px solid var(--rule);border-radius:4px;padding:14px;margin-bottom:18px}
+.compose input.t{width:100%;margin-bottom:8px;font-weight:500}
+.compose textarea{width:100%;min-height:90px;resize:vertical;line-height:1.55}
+.compose .row{display:flex;gap:8px;align-items:center;margin-top:9px;flex-wrap:wrap}
+
+.filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.chip{border:1px solid var(--rule);background:var(--card);border-radius:20px;padding:4px 12px;cursor:pointer;
+  font-size:12px;color:var(--ink2)}
+.chip.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+
+.grid{columns:3 320px;column-gap:14px}
+.note{break-inside:avoid;background:var(--card);border:1px solid var(--rule);border-radius:4px;
+  padding:13px 14px;margin:0 0 14px;display:inline-block;width:100%}
+.note.pin{border-color:var(--warn)}
+.note h3{margin:0 0 5px;font-size:15px;font-weight:600;line-height:1.35}
+.note .txt{white-space:pre-wrap;word-break:break-word;font-size:13.5px;color:var(--ink)}
+.note .meta{margin-top:9px;padding-top:8px;border-top:1px solid var(--rule2);
+  font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--ink3);
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.note .who{color:var(--ink2);text-transform:uppercase}
+.note .acts{margin-left:auto;display:flex;gap:2px}
+.note textarea{width:100%;min-height:110px;resize:vertical}
+.note input.t{width:100%;margin-bottom:7px}
+.pinmark{color:var(--warn)}
+.empty{padding:44px;text-align:center;color:var(--ink3)}
+@media(max-width:700px){.grid{columns:1}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="t-title">Notes</h1>
+  <select id="who"></select>
+  <span class="spacer"></span>
+  <input id="q" placeholder="…" style="min-width:190px">
+  <div class="lang">
+    <button data-l="fr" aria-pressed="true">FR</button>
+    <button data-l="en" aria-pressed="false">EN</button>
+  </div>
+</header>
+
+<div id="bar"><span class="dot" id="dot"></span><span id="msg">…</span></div>
+
+<main>
+  <p class="hint" id="t-hint"></p>
+  <div id="compose"></div>
+  <div class="filters" id="filters"></div>
+  <div id="list"></div>
+</main>
+
+<script type="module">
+import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import {getDatabase,ref,onValue,set,update,remove,push,child}
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+
+const CFG={apiKey:"AIzaSyByf4SmnGJvfkkJVFhfINXikb8I8ge5VRU",
+  authDomain:"matiere-noire-todo.firebaseapp.com",
+  databaseURL:"https://matiere-noire-todo-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId:"matiere-noire-todo",storageBucket:"matiere-noire-todo.firebasestorage.app",
+  messagingSenderId:"583651643354",appId:"1:583651643354:web:74b78c43316b9d657dfae3"};
+const R_NOTES='notes', R_REF='referentiel/people', R_LEG='people/employees';
+const db=getDatabase(initializeApp(CFG));
+
+const T={
+ fr:{title:'Notes',who:'Qui es-tu ?',search:'Rechercher…',
+  hint:'Tableau partagé : tout le monde voit tout. Choisis ton nom, écris, c’est enregistré aussitôt.',
+  pickName:'Choisis ton nom pour écrire une note.',
+  titre:'Titre',texte:'Ta note…',publier:'Publier',annuler:'Annuler',
+  tous:'Toutes',miennes:'Les miennes',epinglees:'Épinglées',
+  vide:'Aucune note pour le moment.',videFiltre:'Aucune note ne correspond.',
+  modifier:'Modifier',supprimer:'Supprimer',enregistrer:'Enregistrer',
+  epingler:'Épingler',desepingler:'Ne plus épingler',
+  confirmDel:t=>`Supprimer « ${t||'cette note'} » ? C’est définitif.`,
+  modifie:'modifiée',connecte:n=>`Connecté · ${n} notes`,
+  enregistre:h=>'Enregistré · '+h, echec:m=>'Non enregistré : '+m, dbFail:m=>'Base inaccessible : '+m,
+  loc:'fr-FR'},
+ en:{title:'Notes',who:'Who are you?',search:'Search…',
+  hint:'Shared board: everyone sees everything. Pick your name, write, it saves instantly.',
+  pickName:'Pick your name to write a note.',
+  titre:'Title',texte:'Your note…',publier:'Post',annuler:'Cancel',
+  tous:'All',miennes:'Mine',epinglees:'Pinned',
+  vide:'No notes yet.',videFiltre:'No matching notes.',
+  modifier:'Edit',supprimer:'Delete',enregistrer:'Save',
+  epingler:'Pin',desepingler:'Unpin',
+  confirmDel:t=>`Delete “${t||'this note'}”? This cannot be undone.`,
+  modifie:'edited',connecte:n=>`Connected · ${n} notes`,
+  enregistre:h=>'Saved · '+h, echec:m=>'Not saved: '+m, dbFail:m=>'Database unreachable: '+m,
+  loc:'en-GB'}
+};
+let L=localStorage.getItem('mn_notes_lang')
+   ||((navigator.language||'').toLowerCase().startsWith('fr')?'fr':'en');
+const t=()=>T[L];
+
+let NOTES={}, people=[], me=localStorage.getItem('mn_notes_me')||'', filtre='tous', q='', edit=null, draft={ti:'',tx:''};
+
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function status(txt,k){$('#bar').className=k||'';$('#dot').className='dot '+(k||'');$('#msg').textContent=txt;}
+function quand(ms){
+  if(!ms) return '';
+  const d=new Date(ms), j=(Date.now()-ms)/86400000;
+  if(j<1) return d.toLocaleTimeString(t().loc,{hour:'2-digit',minute:'2-digit'});
+  if(j<7) return d.toLocaleDateString(t().loc,{weekday:'short',hour:'2-digit',minute:'2-digit'});
+  return d.toLocaleDateString(t().loc,{day:'2-digit',month:'short',year:'2-digit'});
+}
+
+/* ── référentiel des personnes ── */
+onValue(ref(db,R_REF),s=>{
+  const v=s.val(); const today=new Date().toISOString().slice(0,10);
+  if(Array.isArray(v)&&v.length){
+    people=v.filter(p=>!p.archive&&(p.periodes||[]).some(x=>(!x.debut||x.debut<=today)&&(!x.fin||x.fin>=today)))
+            .map(p=>p.nom).sort((a,b)=>a.localeCompare(b,'fr'));
+  }
+  fillWho(); render();
+},()=>{ onValue(ref(db,R_LEG),s2=>{ people=s2.val()||[]; fillWho(); render(); }); });
+
+onValue(ref(db,R_NOTES),s=>{
+  NOTES=s.val()||{};
+  status(t().connecte(Object.keys(NOTES).length),'ok');
+  render();
+},e=>status(t().dbFail(e.message),'err'));
+
+function fillWho(){
+  const s=$('#who');
+  s.innerHTML=`<option value="">${esc(t().who)}</option>`+
+    people.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  s.value=people.includes(me)?me:'';
+  if(!people.includes(me)) me='';
+}
+$('#who').onchange=e=>{me=e.target.value;localStorage.setItem('mn_notes_me',me);render();};
+$('#q').oninput=e=>{q=e.target.value.toLowerCase();renderList();};
+
+/* ── rendu ── */
+function render(){
+  document.documentElement.lang=L;
+  $('#t-title').textContent=t().title;
+  $('#t-hint').textContent=t().hint;
+  $('#q').placeholder=t().search;
+  renderCompose(); renderFiltres(); renderList();
+}
+
+function renderCompose(){
+  if(!me){ $('#compose').innerHTML=`<div class="compose" style="color:var(--ink3)">${esc(t().pickName)}</div>`; return; }
+  $('#compose').innerHTML=`<div class="compose">
+    <input class="t" id="n-ti" placeholder="${esc(t().titre)}" value="${esc(draft.ti)}">
+    <textarea id="n-tx" placeholder="${esc(t().texte)}">${esc(draft.tx)}</textarea>
+    <div class="row"><span class="meta" style="font-family:var(--mono);font-size:10px;color:var(--ink3);text-transform:uppercase">${esc(me)}</span>
+      <span class="spacer"></span>
+      <button class="btn p" id="n-ok">${esc(t().publier)}</button></div></div>`;
+  $('#n-ti').oninput=e=>draft.ti=e.target.value;
+  $('#n-tx').oninput=e=>draft.tx=e.target.value;
+  $('#n-tx').onkeydown=e=>{ if((e.metaKey||e.ctrlKey)&&e.key==='Enter') publier(); };
+  $('#n-ok').onclick=publier;
+}
+
+function renderFiltres(){
+  const auteurs=[...new Set(Object.values(NOTES).map(n=>n.auteur).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'fr'));
+  const chip=(v,l,n)=>`<button class="chip${filtre===v?' on':''}" data-f="${esc(v)}">${esc(l)}${n!=null?` ${n}`:''}</button>`;
+  $('#filters').innerHTML=
+    chip('tous',t().tous,Object.keys(NOTES).length)
+    +(me?chip('moi',t().miennes,Object.values(NOTES).filter(n=>n.auteur===me).length):'')
+    +chip('pin',t().epinglees,Object.values(NOTES).filter(n=>n.epingle).length)
+    +auteurs.filter(a=>a!==me).map(a=>chip('a:'+a,a,Object.values(NOTES).filter(n=>n.auteur===a).length)).join('');
+  $('#filters').querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{filtre=b.dataset.f;renderFiltres();renderList();});
+}
+
+function renderList(){
+  let arr=Object.entries(NOTES);
+  if(filtre==='moi') arr=arr.filter(([,n])=>n.auteur===me);
+  else if(filtre==='pin') arr=arr.filter(([,n])=>n.epingle);
+  else if(filtre.startsWith('a:')) arr=arr.filter(([,n])=>n.auteur===filtre.slice(2));
+  if(q) arr=arr.filter(([,n])=>((n.titre||'')+' '+(n.texte||'')+' '+(n.auteur||'')).toLowerCase().includes(q));
+  arr.sort((a,b)=>(b[1].epingle?1:0)-(a[1].epingle?1:0) || (b[1].majLe||b[1].creeLe||0)-(a[1].majLe||a[1].creeLe||0));
+
+  if(!arr.length){ $('#list').innerHTML=`<div class="empty">${esc(Object.keys(NOTES).length?t().videFiltre:t().vide)}</div>`; return; }
+
+  $('#list').innerHTML='<div class="grid">'+arr.map(([id,n])=>{
+    if(edit===id) return `<div class="note" data-id="${esc(id)}">
+      <input class="t" id="e-ti-${esc(id)}" value="${esc(n.titre||'')}" placeholder="${esc(t().titre)}">
+      <textarea id="e-tx-${esc(id)}">${esc(n.texte||'')}</textarea>
+      <div class="meta"><span class="acts">
+        <button class="btn" data-save="${esc(id)}">${esc(t().enregistrer)}</button>
+        <button class="btn" data-cancel>${esc(t().annuler)}</button></span></div></div>`;
+    const mien=n.auteur===me;
+    return `<div class="note${n.epingle?' pin':''}" data-id="${esc(id)}">
+      ${n.titre?`<h3>${n.epingle?'<span class="pinmark">◆</span> ':''}${esc(n.titre)}</h3>`:''}
+      <div class="txt">${esc(n.texte||'')}</div>
+      <div class="meta">
+        <span class="who">${esc(n.auteur||'—')}</span>
+        <span>${quand(n.majLe||n.creeLe)}${n.majLe&&n.creeLe&&n.majLe-n.creeLe>60000?' · '+esc(t().modifie):''}</span>
+        <span class="acts">
+          <button class="btn d" data-pin="${esc(id)}" title="${esc(n.epingle?t().desepingler:t().epingler)}">${n.epingle?'◆':'◇'}</button>
+          ${mien?`<button class="btn d" data-edit="${esc(id)}" title="${esc(t().modifier)}">✎</button>
+                  <button class="btn d" data-del="${esc(id)}" title="${esc(t().supprimer)}">✕</button>`:''}
+        </span></div></div>`;
+  }).join('')+'</div>';
+
+  $('#list').querySelectorAll('[data-pin]').forEach(b=>b.onclick=()=>epingler(b.dataset.pin));
+  $('#list').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{edit=b.dataset.edit;renderList();});
+  $('#list').querySelectorAll('[data-cancel]').forEach(b=>b.onclick=()=>{edit=null;renderList();});
+  $('#list').querySelectorAll('[data-save]').forEach(b=>b.onclick=()=>sauver(b.dataset.save));
+  $('#list').querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>supprimer(b.dataset.del));
+}
+
+/* ── actions ── */
+async function publier(){
+  const ti=draft.ti.trim(), tx=draft.tx.trim();
+  if(!me||(!ti&&!tx)) return;
+  const n={auteur:me,titre:ti,texte:tx,epingle:false,creeLe:Date.now(),majLe:Date.now()};
+  const r=push(ref(db,R_NOTES));
+  NOTES[r.key]=n; draft={ti:'',tx:''}; renderCompose(); renderFiltres(); renderList();
+  try{ await set(r,n); status(t().enregistre(new Date().toLocaleTimeString(t().loc)),'ok'); }
+  catch(e){ delete NOTES[r.key]; renderList(); status(t().echec(e.message),'err'); }
+}
+async function sauver(id){
+  const ti=$(`#e-ti-${CSS.escape(id)}`).value.trim(), tx=$(`#e-tx-${CSS.escape(id)}`).value.trim();
+  const u={titre:ti,texte:tx,majLe:Date.now()};
+  NOTES[id]={...NOTES[id],...u}; edit=null; renderList();
+  try{ await update(child(ref(db,R_NOTES),id),u); status(t().enregistre(new Date().toLocaleTimeString(t().loc)),'ok'); }
+  catch(e){ status(t().echec(e.message),'err'); }
+}
+async function epingler(id){
+  const v=!NOTES[id].epingle;
+  NOTES[id]={...NOTES[id],epingle:v}; renderFiltres(); renderList();
+  try{ await update(child(ref(db,R_NOTES),id),{epingle:v}); }
+  catch(e){ status(t().echec(e.message),'err'); }
+}
+async function supprimer(id){
+  const n=NOTES[id];
+  if(!n||n.auteur!==me) return;
+  if(!confirm(t().confirmDel(n.titre))) return;
+  const sauvegarde=n; delete NOTES[id]; renderFiltres(); renderList();
+  try{ await remove(child(ref(db,R_NOTES),id)); }
+  catch(e){ NOTES[id]=sauvegarde; renderList(); status(t().echec(e.message),'err'); }
+}
+
+document.querySelectorAll('.lang button').forEach(b=>b.onclick=()=>{
+  L=b.dataset.l; localStorage.setItem('mn_notes_lang',L);
+  document.querySelectorAll('.lang button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+  render();
+});
+document.querySelectorAll('.lang button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.l===L));
+status('…','');
+</script>
+</body>
+</html>
