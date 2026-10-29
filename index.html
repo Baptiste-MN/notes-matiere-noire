@@ -86,6 +86,7 @@ main{padding:18px;max-width:1180px}
 
 <main>
   <p class="hint" id="t-hint"></p>
+  <div id="migr"></div>
   <div id="compose"></div>
   <div class="filters" id="filters"></div>
   <div id="list"></div>
@@ -93,7 +94,7 @@ main{padding:18px;max-width:1180px}
 
 <script type="module">
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import {getDatabase,ref,onValue,set,update,remove,push,child}
+import {getDatabase,ref,onValue,set,update,remove,push,child,get}
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
 
 const CFG={apiKey:"AIzaSyByf4SmnGJvfkkJVFhfINXikb8I8ge5VRU",
@@ -167,11 +168,28 @@ async function mnGate(){
   });
 }
 /* ═══ fin MN-GATE v1 ═══ */
-await mnGate();
+const mnUser=await mnGate();
+/* ═══ MN-ID v1 — identité liée au compte Google (acces/<email>.personId) ═══
+   Direction : voit et modifie les données de tout le monde. Équipe : uniquement les siennes. */
+const MN_DIR=['baptiste@matiere-noire.paris','felix@matiere-noire.paris','pierre@matiere-noire.paris','sam@matiere-noire.paris'];
+const mnEmail=(mnUser.email||'').toLowerCase();
+const mnAdmin=MN_DIR.includes(mnEmail);
+let mnPid=null;
+try{ mnPid=((await get(ref(db,'acces/'+mnEmail.replace(/\./g,',')))).val()||{}).personId||null; }catch(_){}
+const mnNorm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+/* un nom libre (« Aleksandra », « Aleksandra Ognjanov ») correspond-il à cette fiche ? */
+const mnMemeNom=(nom,p)=>!!p&&!!nom&&(mnNorm(nom)===mnNorm(p.nom)||mnNorm(nom)===mnNorm(String(p.nom||'').split(/\s+/)[0]));
+/* rattache un nom libre à une fiche unique, sinon null (ambigu ou inconnu) */
+const mnFiche=(nom,liste)=>{const c=(liste||[]).filter(p=>p&&p.id&&mnMemeNom(nom,p));return c.length===1?c[0]:null;};
+if(!mnAdmin&&!mnPid){
+  document.body.insertAdjacentHTML('beforeend',`<div style="position:fixed;inset:0;z-index:2147483000;background:#F7F7F5;color:#14161A;display:flex;align-items:center;justify-content:center;font-family:'Helvetica Neue',Inter,system-ui,sans-serif;padding:24px"><div style="max-width:380px"><div style="font-size:15px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin-bottom:18px">Matiere Noire</div><p style="color:#A63A2B">Ton compte (${mnEmail.replace(/[<>&"]/g,'')}) n’est relié à aucune fiche de l’équipe. Demande à Baptiste de le relier.<br>Your account is not linked to a team member. Ask Baptiste.</p></div></div>`);
+  await new Promise(()=>{});   // arrêt : rien d'autre ne se charge
+}
+/* ═══ fin MN-ID v1 ═══ */
 
 const T={
  fr:{title:'Notes',who:'Qui es-tu ?',search:'Rechercher…',
-  hint:'Tableau partagé : tout le monde voit tout. Choisis ton nom, écris, c’est enregistré aussitôt.',
+  hint:'Tableau partagé : tout le monde voit tout. Écris, c’est enregistré aussitôt sous ton nom.',
   pickName:'Choisis ton nom pour écrire une note.',
   titre:'Titre',texte:'Ta note…',publier:'Publier',annuler:'Annuler',
   tous:'Toutes',miennes:'Les miennes',epinglees:'Épinglées',
@@ -183,7 +201,7 @@ const T={
   enregistre:h=>'Enregistré · '+h, echec:m=>'Non enregistré : '+m, dbFail:m=>'Base inaccessible : '+m,
   loc:'fr-FR'},
  en:{title:'Notes',who:'Who are you?',search:'Search…',
-  hint:'Shared board: everyone sees everything. Pick your name, write, it saves instantly.',
+  hint:'Shared board: everyone sees everything. Write, it saves instantly under your name.',
   pickName:'Pick your name to write a note.',
   titre:'Title',texte:'Your note…',publier:'Post',annuler:'Cancel',
   tous:'All',miennes:'Mine',epinglees:'Pinned',
@@ -199,7 +217,7 @@ let L=localStorage.getItem('mn_notes_lang')
    ||((navigator.language||'').toLowerCase().startsWith('fr')?'fr':'en');
 const t=()=>T[L];
 
-let NOTES={}, people=[], me=localStorage.getItem('mn_notes_me')||'', filtre='tous', q='', edit=null, draft={ti:'',tx:''};
+let NOTES={}, people=[], refAll=[], me='', filtre='tous', q='', edit=null, draft={ti:'',tx:''};
 
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -213,8 +231,13 @@ function quand(ms){
 }
 
 /* ── référentiel des personnes ── */
+/* une note est « à moi » si elle porte mon personId (ou, pour les anciennes, mon prénom) */
+const mien=n=>!!n&&(n.personId?n.personId===mnPid:mnMemeNom(n.auteur,refAll.find(p=>p.id===mnPid)));
+const peutModifier=n=>mnAdmin||mien(n);
 onValue(ref(db,R_REF),s=>{
   const v=s.val(); const today=new Date().toISOString().slice(0,10);
+  refAll=Array.isArray(v)?v.filter(Boolean):[];
+  const f=refAll.find(p=>p.id===mnPid); me=f?f.nom:(mnAdmin?mnEmail.split('@')[0]:'');
   if(Array.isArray(v)&&v.length){
     people=v.filter(p=>!p.archive&&(p.periodes||[]).some(x=>(!x.debut||x.debut<=today)&&(!x.fin||x.fin>=today)))
             .map(p=>p.nom).sort((a,b)=>a.localeCompare(b,'fr'));
@@ -230,12 +253,13 @@ onValue(ref(db,R_NOTES),s=>{
 
 function fillWho(){
   const s=$('#who');
+  s.innerHTML=`<option>${esc(me)}</option>`; s.disabled=true; return;   // identité = compte connecté
   s.innerHTML=`<option value="">${esc(t().who)}</option>`+
     people.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
   s.value=people.includes(me)?me:'';
   if(!people.includes(me)) me='';
 }
-$('#who').onchange=e=>{me=e.target.value;localStorage.setItem('mn_notes_me',me);render();};
+$('#who').onchange=()=>{};
 $('#q').oninput=e=>{q=e.target.value.toLowerCase();renderList();};
 
 /* ── rendu ── */
@@ -244,7 +268,7 @@ function render(){
   $('#t-title').textContent=t().title;
   $('#t-hint').textContent=t().hint;
   $('#q').placeholder=t().search;
-  renderCompose(); renderFiltres(); renderList();
+  renderMigr(); renderCompose(); renderFiltres(); renderList();
 }
 
 function renderCompose(){
@@ -266,7 +290,7 @@ function renderFiltres(){
   const chip=(v,l,n)=>`<button class="chip${filtre===v?' on':''}" data-f="${esc(v)}">${esc(l)}${n!=null?` ${n}`:''}</button>`;
   $('#filters').innerHTML=
     chip('tous',t().tous,Object.keys(NOTES).length)
-    +(me?chip('moi',t().miennes,Object.values(NOTES).filter(n=>n.auteur===me).length):'')
+    +(me?chip('moi',t().miennes,Object.values(NOTES).filter(mien).length):'')
     +chip('pin',t().epinglees,Object.values(NOTES).filter(n=>n.epingle).length)
     +auteurs.filter(a=>a!==me).map(a=>chip('a:'+a,a,Object.values(NOTES).filter(n=>n.auteur===a).length)).join('');
   $('#filters').querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{filtre=b.dataset.f;renderFiltres();renderList();});
@@ -274,7 +298,7 @@ function renderFiltres(){
 
 function renderList(){
   let arr=Object.entries(NOTES);
-  if(filtre==='moi') arr=arr.filter(([,n])=>n.auteur===me);
+  if(filtre==='moi') arr=arr.filter(([,n])=>mien(n));
   else if(filtre==='pin') arr=arr.filter(([,n])=>n.epingle);
   else if(filtre.startsWith('a:')) arr=arr.filter(([,n])=>n.auteur===filtre.slice(2));
   if(q) arr=arr.filter(([,n])=>((n.titre||'')+' '+(n.texte||'')+' '+(n.auteur||'')).toLowerCase().includes(q));
@@ -289,7 +313,7 @@ function renderList(){
       <div class="meta"><span class="acts">
         <button class="btn" data-save="${esc(id)}">${esc(t().enregistrer)}</button>
         <button class="btn" data-cancel>${esc(t().annuler)}</button></span></div></div>`;
-    const mien=n.auteur===me;
+    const modifiable=peutModifier(n);
     return `<div class="note${n.epingle?' pin':''}" data-id="${esc(id)}">
       ${n.titre?`<h3>${n.epingle?'<span class="pinmark">◆</span> ':''}${esc(n.titre)}</h3>`:''}
       <div class="txt">${esc(n.texte||'')}</div>
@@ -298,7 +322,7 @@ function renderList(){
         <span>${quand(n.majLe||n.creeLe)}${n.majLe&&n.creeLe&&n.majLe-n.creeLe>60000?' · '+esc(t().modifie):''}</span>
         <span class="acts">
           <button class="btn d" data-pin="${esc(id)}" title="${esc(n.epingle?t().desepingler:t().epingler)}">${n.epingle?'◆':'◇'}</button>
-          ${mien?`<button class="btn d" data-edit="${esc(id)}" title="${esc(t().modifier)}">✎</button>
+          ${modifiable?`<button class="btn d" data-edit="${esc(id)}" title="${esc(t().modifier)}">✎</button>
                   <button class="btn d" data-del="${esc(id)}" title="${esc(t().supprimer)}">✕</button>`:''}
         </span></div></div>`;
   }).join('')+'</div>';
@@ -310,11 +334,29 @@ function renderList(){
   $('#list').querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>supprimer(b.dataset.del));
 }
 
+/* ── rattachement des anciennes notes (direction) ── */
+function renderMigr(){
+  const box=$('#migr');
+  const sans=Object.entries(NOTES).filter(([,n])=>!n.personId);
+  if(!mnAdmin||!sans.length||!refAll.length){box.innerHTML='';return;}
+  const ok=[],ko=[];
+  sans.forEach(([id,n])=>{const f=mnFiche(n.auteur,refAll);(f?ok:ko).push([id,n,f]);});
+  box.innerHTML=`<div class="compose" style="border-color:var(--warn,#B4711E)">
+    <div class="meta" style="margin-bottom:6px">Anciennes notes à relier à une fiche (${sans.length}) : ${ok.map(([,n,f])=>esc(n.auteur)+' → '+esc(f.id)).join(' · ')}
+    ${ko.length?`<br><span style="color:var(--stop,#A63A2B)">Non reconnues : ${ko.map(([,n])=>esc(n.auteur||'—')).join(', ')}</span>`:''}</div>
+    ${ok.length?`<button class="btn p" id="migrBtn">Relier ${ok.length} note${ok.length>1?'s':''}</button>`:''}</div>`;
+  const b=$('#migrBtn');
+  if(b) b.onclick=async()=>{
+    const maj={}; ok.forEach(([id,,f])=>maj[id+'/personId']=f.id);
+    try{ await update(ref(db,R_NOTES),maj); }catch(e){ status(t().echec(e.message),'err'); }
+  };
+}
+
 /* ── actions ── */
 async function publier(){
   const ti=draft.ti.trim(), tx=draft.tx.trim();
   if(!me||(!ti&&!tx)) return;
-  const n={auteur:me,titre:ti,texte:tx,epingle:false,creeLe:Date.now(),majLe:Date.now()};
+  const n={auteur:me,personId:mnPid,email:mnEmail,titre:ti,texte:tx,epingle:false,creeLe:Date.now(),majLe:Date.now()};
   const r=push(ref(db,R_NOTES));
   NOTES[r.key]=n; draft={ti:'',tx:''}; renderCompose(); renderFiltres(); renderList();
   try{ await set(r,n); status(t().enregistre(new Date().toLocaleTimeString(t().loc)),'ok'); }
@@ -335,7 +377,7 @@ async function epingler(id){
 }
 async function supprimer(id){
   const n=NOTES[id];
-  if(!n||n.auteur!==me) return;
+  if(!n||!peutModifier(n)) return;
   if(!confirm(t().confirmDel(n.titre))) return;
   const sauvegarde=n; delete NOTES[id]; renderFiltres(); renderList();
   try{ await remove(child(ref(db,R_NOTES),id)); }
